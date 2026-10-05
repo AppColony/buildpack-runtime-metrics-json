@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# End-to-end smoke tests for the JSON transformer and buildpack lifecycle.
+
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+WRAP_LOGS="${HERE}/lib/wrap-logs.js"
+TMPDIR="$(mktemp -d "${TMPDIR:-/tmp}/runtime-metrics-buildpack.XXXXXX")"
+trap 'rm -rf "${TMPDIR}"' EXIT
+
+if ! command -v node >/dev/null; then
+  echo "FAIL: node not on PATH" >&2
+  exit 1
+fi
+
+pass() { printf '  ok: %s\n' "$1"; }
+fail() { printf '  FAIL: %s\n' "$1" >&2; exit 1; }
+assert_contains() {
+  local value="$1"
+  local expected="$2"
+  local message="$3"
+  [[ "${value}" == *"${expected}"* ]] || fail "${message} (got: ${value})"
+}
+
+# Load-average line becomes JSON with numeric values.
+out="$(node "${WRAP_LOGS}" bash -c $'printf \'%s\\n\' \'2026-09-30T11:26:54.092734+00:00 heroku[web.1]: source=web.1 dyno=heroku.x sample#load_avg_1m=0.42 sample#load_avg_5m=0.18 sample#load_avg_15m=0.09\'')"
+assert_contains "${out}" '"logtype":"heroku.runtime_metrics"' "load line: missing logtype"
+assert_contains "${out}" '"dyno_source":"web.1"' "load line: missing dyno_source"
+assert_contains "${out}" '"load_avg_1m":0.42' "load line: missing load_avg_1m"
+assert_contains "${out}" '"load_avg_5m":0.18' "load line: missing load_avg_5m"
+assert_contains "${out}" '"load_avg_15m":0.09' "load line: missing load_avg_15m"
+pass "load line becomes JSON"
+
+# Memory line becomes JSON with normalized values.
+out="$(node "${WRAP_LOGS}" bash -c $'printf \'%s\\n\' \'2026-09-30T11:26:54.141252+00:00 heroku[sidekiq.1]: source=sidekiq.1 dyno=heroku.x sample#memory_total=1364.12MB sample#memory_rss=992.84MB sample#memory_cache=8.43MB sample#memory_swap=362.86MB sample#memory_pgpgin=66926pages sample#memory_pgpgout=0pages sample#memory_quota=1024.00MB\'')"
+assert_contains "${out}" '"logtype":"heroku.runtime_metrics"' "memory line: missing logtype"
+assert_contains "${out}" '"dyno_source":"sidekiq.1"' "memory line: missing dyno_source"
+assert_contains "${out}" '"memory_total_mb":1364' "memory line: missing memory_total_mb"
+assert_contains "${out}" '"memory_rss_mb":993' "memory line: missing memory_rss_mb"
+assert_contains "${out}" '"memory_quota_mb":1024' "memory line: missing memory_quota_mb"
+assert_contains "${out}" '"memory_pgpgin":66926' "memory line: missing memory_pgpgin"
+pass "memory line becomes JSON"
+
+# Non-runtime lines are unchanged.
+plain='2026-09-30T11:30:00.000000+00:00 app[web.1]: I, [2026-09-30T11:30:00.000000 #7520] INFO -- : Started GET "/" for 127.0.0.1'
+printf -v command 'printf "%%s\\n" %q' "${plain}"
+out="$(node "${WRAP_LOGS}" bash -c "${command}")"
+[ "${out}" = "${plain}" ] || fail "application log: not unchanged"
+pass "application log passes through unchanged"
+
+plain='2026-09-30T11:30:01.000000+00:00 heroku[router]: at=info method=GET path="/" host=example.herokuapp.com request_id=abc dyno=web.1 connect=1ms service=23ms status=200 bytes=42'
+printf -v command 'printf "%%s\\n" %q' "${plain}"
+out="$(node "${WRAP_LOGS}" bash -c "${command}")"
+[ "${out}" = "${plain}" ] || fail "router log: not unchanged"
+pass "router log passes through unchanged"
+
+# Child status and stderr are preserved.
+set +e
+node "${WRAP_LOGS}" bash -c 'exit 7' >/dev/null 2>&1
+code=$?
+set -e
+[ "${code}" -eq 7 ] || fail "exit code: expected 7, got ${code}"
+pass "child exit code propagates"
+
+err="$(node "${WRAP_LOGS}" bash -c 'echo hello-from-stderr >&2; exit 0' 2>&1 >/dev/null)"
+assert_contains "${err}" 'hello-from-stderr' "stderr: not forwarded"
+pass "child stderr passes through unchanged"
+
+# Classic Buildpack API entrypoints must succeed.
+"${HERE}/bin/detect" "${TMPDIR}"
+"${HERE}/bin/release" "${TMPDIR}"
+pass "detect and release entrypoints succeed"
+
+# Compile installs assets and rewrites every Procfile command.
+BUILD_DIR="${TMPDIR}/build"
+mkdir -p "${BUILD_DIR}"
+printf '%s\n' 'web: bundle exec puma' 'worker: bundle exec sidekiq' > "${BUILD_DIR}/Procfile"
+"${HERE}/bin/compile" "${BUILD_DIR}" "${TMPDIR}/cache" "${TMPDIR}/env" >/dev/null
+[ -f "${BUILD_DIR}/.heroku-runtime-metrics/wrap-logs.js" ] || fail "compile: missing wrap-logs.js"
+[ -x "${BUILD_DIR}/.heroku-runtime-metrics/run.sh" ] || fail "compile: run.sh is not executable"
+[ ! -e "${BUILD_DIR}/Procfile.bak" ] || fail "compile: left Procfile.bak"
+expected=$'web: /app/.heroku-runtime-metrics/run.sh "bundle exec puma"\nworker: /app/.heroku-runtime-metrics/run.sh "bundle exec sidekiq"'
+actual="$(<"${BUILD_DIR}/Procfile")"
+[ "${actual}" = "${expected}" ] || fail "compile: Procfile was not rewritten as expected"
+pass "compile installs assets and rewrites Procfile"
+
+# Compile is also valid when an app has no Procfile.
+NO_PROCFILE_DIR="${TMPDIR}/no-procfile"
+mkdir -p "${NO_PROCFILE_DIR}"
+"${HERE}/bin/compile" "${NO_PROCFILE_DIR}" "${TMPDIR}/cache" "${TMPDIR}/env" >/dev/null
+[ -f "${NO_PROCFILE_DIR}/.heroku-runtime-metrics/wrap-logs.js" ] || fail "compile without Procfile: missing wrapper"
+pass "compile succeeds without Procfile"
+
+printf '\nAll buildpack smoke tests passed.\n'

@@ -1,0 +1,17 @@
+{
+  "name": "heroku-buildpack-runtime-metrics-json",
+  "version": "0.1.0",
+  "description": "Rewrites Heroku log-runtime-metrics lines as JSON on the dyno stdout stream so New Relic can index them as queryable attributes.",
+  "keywords": [
+    "heroku",
+    "buildpack",
+    "newrelic",
+    "logs",
+    "json",
+    "runtime-metrics"
+  ],
+  "license": "MIT",
+  "scripts": {
+    "test": "bash bin/test"
+  }
+}

@@ -1,0 +1,54 @@
+name: Buildpack CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: buildpack-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Run buildpack smoke tests
+        run: bash bin/test
+
+      - name: Verify executable entrypoints
+        run: |
+          test -x bin/detect
+          test -x bin/compile
+          test -x bin/release
+          test -x bin/test
+          test -x lib/run.sh
+
+      - name: Verify archive layout
+        run: |
+          git archive --format=tar.gz --prefix=buildpack/ HEAD > buildpack.tar.gz
+          tar -tzf buildpack.tar.gz | grep -Fx 'buildpack/bin/detect'
+          tar -tzf buildpack.tar.gz | grep -Fx 'buildpack/bin/compile'
+          tar -tzf buildpack.tar.gz | grep -Fx 'buildpack/bin/release'
+          tar -tzf buildpack.tar.gz | grep -Fx 'buildpack/bin/test'
+          tar -tzf buildpack.tar.gz | grep -Fx 'buildpack/lib/run.sh'
+          tar -tzf buildpack.tar.gz | grep -Fx 'buildpack/lib/wrap-logs.js'
+          tar -tzf buildpack.tar.gz | grep -Fx 'buildpack/package.json'
+          tar -tzf buildpack.tar.gz | grep -Fx 'buildpack/README.md'
+          tar -tzf buildpack.tar.gz | grep -Fx 'buildpack/AGENTS.md'
+          tar -tzf buildpack.tar.gz | grep -Fx 'buildpack/LICENSE'

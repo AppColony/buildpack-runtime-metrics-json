@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# bin/release <build_dir>
+#
+# The Classic Buildpack API requires this script. The wrapper is installed
+# during compile, so no release-phase work is necessary.
+
+exit 0

@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# bin/compile <build_dir> <cache_dir> <env_dir>
+#
+# Installs the log wrapper into the slug and rewrites Procfile commands
+# so dyno stdout passes through the JSON transformer.
+
+set -euo pipefail
+
+BUILD_DIR="${1}"
+BUILDPACK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+mkdir -p "${BUILD_DIR}/.heroku-runtime-metrics"
+cp "${BUILDPACK_DIR}/lib/wrap-logs.js" "${BUILD_DIR}/.heroku-runtime-metrics/wrap-logs.js"
+cp "${BUILDPACK_DIR}/lib/run.sh" "${BUILD_DIR}/.heroku-runtime-metrics/run.sh"
+chmod +x "${BUILD_DIR}/.heroku-runtime-metrics/run.sh"
+
+# Each Procfile command becomes:
+#   <process>: /app/.heroku-runtime-metrics/run.sh "<original command>"
+PROCFILE="${BUILD_DIR}/Procfile"
+if [ -f "${PROCFILE}" ]; then
+  sed -i.bak -E \
+    's|^([a-zA-Z0-9_-]+):[[:space:]]+(.+)$|\1: /app/.heroku-runtime-metrics/run.sh "\2"|' \
+    "${PROCFILE}"
+  rm -f "${PROCFILE}.bak"
+fi
+
+echo "-----> Heroku runtime-metrics JSON buildpack installed"
