@@ -22,8 +22,13 @@ assert_contains() {
   [[ "${value}" == *"${expected}"* ]] || fail "${message} (got: ${value})"
 }
 
+# Procfile commands reach the wrapper as a single argument.
+run_wrapped() {
+  node "${WRAP_LOGS}" "$1"
+}
+
 # Load-average line becomes JSON with numeric values.
-out="$(node "${WRAP_LOGS}" bash -c $'printf \'%s\\n\' \'2026-09-30T11:26:54.092734+00:00 heroku[web.1]: source=web.1 dyno=heroku.x sample#load_avg_1m=0.42 sample#load_avg_5m=0.18 sample#load_avg_15m=0.09\'')"
+out="$(run_wrapped "printf '%s\\n' '2026-09-30T11:26:54.092734+00:00 heroku[web.1]: source=web.1 dyno=heroku.x sample#load_avg_1m=0.42 sample#load_avg_5m=0.18 sample#load_avg_15m=0.09'")"
 assert_contains "${out}" '"logtype":"heroku.runtime_metrics"' "load line: missing logtype"
 assert_contains "${out}" '"dyno_source":"web.1"' "load line: missing dyno_source"
 assert_contains "${out}" '"load_avg_1m":0.42' "load line: missing load_avg_1m"
@@ -32,7 +37,7 @@ assert_contains "${out}" '"load_avg_15m":0.09' "load line: missing load_avg_15m"
 pass "load line becomes JSON"
 
 # Memory line becomes JSON with normalized values.
-out="$(node "${WRAP_LOGS}" bash -c $'printf \'%s\\n\' \'2026-09-30T11:26:54.141252+00:00 heroku[sidekiq.1]: source=sidekiq.1 dyno=heroku.x sample#memory_total=1364.12MB sample#memory_rss=992.84MB sample#memory_cache=8.43MB sample#memory_swap=362.86MB sample#memory_pgpgin=66926pages sample#memory_pgpgout=0pages sample#memory_quota=1024.00MB\'')"
+out="$(run_wrapped "printf '%s\\n' '2026-09-30T11:26:54.141252+00:00 heroku[sidekiq.1]: source=sidekiq.1 dyno=heroku.x sample#memory_total=1364.12MB sample#memory_rss=992.84MB sample#memory_cache=8.43MB sample#memory_swap=362.86MB sample#memory_pgpgin=66926pages sample#memory_pgpgout=0pages sample#memory_quota=1024.00MB'")"
 assert_contains "${out}" '"logtype":"heroku.runtime_metrics"' "memory line: missing logtype"
 assert_contains "${out}" '"dyno_source":"sidekiq.1"' "memory line: missing dyno_source"
 assert_contains "${out}" '"memory_total_mb":1364' "memory line: missing memory_total_mb"
@@ -43,28 +48,31 @@ pass "memory line becomes JSON"
 
 # Non-runtime lines are unchanged.
 plain='2026-09-30T11:30:00.000000+00:00 app[web.1]: I, [2026-09-30T11:30:00.000000 #7520] INFO -- : Started GET "/" for 127.0.0.1'
-printf -v command 'printf "%%s\\n" %q' "${plain}"
-out="$(node "${WRAP_LOGS}" bash -c "${command}")"
+out="$(run_wrapped "printf '%s\\n' '${plain}'")"
 [ "${out}" = "${plain}" ] || fail "application log: not unchanged"
 pass "application log passes through unchanged"
 
 plain='2026-09-30T11:30:01.000000+00:00 heroku[router]: at=info method=GET path="/" host=example.herokuapp.com request_id=abc dyno=web.1 connect=1ms service=23ms status=200 bytes=42'
-printf -v command 'printf "%%s\\n" %q' "${plain}"
-out="$(node "${WRAP_LOGS}" bash -c "${command}")"
+out="$(run_wrapped "printf '%s\\n' '${plain}'")"
 [ "${out}" = "${plain}" ] || fail "router log: not unchanged"
 pass "router log passes through unchanged"
 
 # Child status and stderr are preserved.
 set +e
-node "${WRAP_LOGS}" bash -c 'exit 7' >/dev/null 2>&1
+run_wrapped 'exit 7' >/dev/null 2>&1
 code=$?
 set -e
 [ "${code}" -eq 7 ] || fail "exit code: expected 7, got ${code}"
 pass "child exit code propagates"
 
-err="$(node "${WRAP_LOGS}" bash -c 'echo hello-from-stderr >&2; exit 0' 2>&1 >/dev/null)"
+err="$(run_wrapped 'echo hello-from-stderr >&2' 2>&1 >/dev/null)"
 assert_contains "${err}" 'hello-from-stderr' "stderr: not forwarded"
 pass "child stderr passes through unchanged"
+
+# An env-var prefix is part of the one Procfile command argument.
+out="$(run_wrapped 'FOO=bar env')"
+assert_contains "${out}" 'FOO=bar' "env-var-prefixed command: environment was not applied"
+pass "env-var-prefixed command spawns successfully"
 
 # Classic Buildpack API entrypoints must succeed.
 "${HERE}/bin/detect" "${TMPDIR}"

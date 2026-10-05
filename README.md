@@ -29,14 +29,14 @@ Supported dyno types are `web`, `sidekiq`, `sidekiq_integrations`, and `rpush`.
 Add the pinned archive URL before the language buildpacks:
 
 ```text
-https://github.com/AppColony/heroku-buildpack-runtime-metrics-json/tarball/v0.1.0
+https://github.com/AppColony/buildpack-runtime-metrics-json/tarball/v0.1.1
 ```
 
 For example, in Terraform:
 
 ```hcl
 buildpacks = [
-  "https://github.com/AppColony/heroku-buildpack-runtime-metrics-json/tarball/v0.1.0",
+  "https://github.com/AppColony/buildpack-runtime-metrics-json/tarball/v0.1.1",
   "heroku/metrics",
   "heroku/nodejs",
   "heroku/ruby",
